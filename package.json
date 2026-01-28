@@ -1,0 +1,58 @@
+{
+  "name": "@andamio/core",
+  "version": "0.1.0",
+  "description": "Core utilities and constants for Andamio protocol - zero React dependencies",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./hashing": {
+      "types": "./dist/utils/hashing/index.d.ts",
+      "import": "./dist/utils/hashing/index.mjs",
+      "require": "./dist/utils/hashing/index.js"
+    },
+    "./constants": {
+      "types": "./dist/constants/index.d.ts",
+      "import": "./dist/constants/index.mjs",
+      "require": "./dist/constants/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "blakejs": "^1.2.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Andamio-Platform/andamio-core"
+  },
+  "keywords": [
+    "andamio",
+    "cardano",
+    "plutus",
+    "blake2b",
+    "hashing"
+  ],
+  "license": "Apache-2.0"
+}
