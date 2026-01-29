@@ -9,7 +9,7 @@
  * @module @andamio/core/hashing
  */
 
-import * as blake from "blakejs";
+import blake from "blakejs";
 
 /**
  * Native asset in ListValue format: [policyId.tokenName, quantity]

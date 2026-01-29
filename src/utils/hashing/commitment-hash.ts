@@ -13,7 +13,7 @@
  * @module @andamio/core/hashing
  */
 
-import * as blake from "blakejs";
+import blake from "blakejs";
 
 /**
  * Tiptap document structure (simplified)

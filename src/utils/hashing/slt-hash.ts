@@ -17,7 +17,7 @@
  * @module @andamio/core/hashing
  */
 
-import * as blake from "blakejs";
+import blake from "blakejs";
 
 /**
  * Plutus chunk size for byte strings.
