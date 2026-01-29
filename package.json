@@ -1,6 +1,6 @@
 {
   "name": "@andamio/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Core utilities and constants for Andamio protocol - zero React dependencies",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
