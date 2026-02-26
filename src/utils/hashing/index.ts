@@ -20,8 +20,9 @@ export {
   computeTaskHash,
   verifyTaskHash,
   isValidTaskHash,
-  debugTaskCBOR,
+  debugTaskBytes,
   type TaskData,
+  type NativeAsset,
 } from "./task-hash";
 
 // Commitment (assignment evidence) hashing
