@@ -1,7 +1,7 @@
 ---
 title: Fix task hash computation to match on-chain Aiken algorithm
 type: fix
-status: active
+status: completed
 date: 2026-02-26
 deepened: 2026-02-26
 ---
