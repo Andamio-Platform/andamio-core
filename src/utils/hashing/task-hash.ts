@@ -4,8 +4,10 @@
  * Computes the task token name (hash) from task data.
  * This hash is used as the task_hash on-chain (content-addressed identifier).
  *
- * The algorithm matches the on-chain Aiken hash_project_data function using
- * raw byte concatenation and little-endian integer encoding.
+ * The algorithm matches the on-chain Aiken/Haskell hash_project_data function:
+ * - Serialize task data as Plutus Data (CBOR with tag 121 for Constructor 0)
+ * - Use indefinite-length arrays for constructor fields
+ * - Hash with Blake2b-256
  *
  * @module @andamio/core/hashing
  */
@@ -33,11 +35,11 @@ export type NativeAsset = [
 /**
  * Task data structure matching the Aiken ProjectData type.
  *
- * Fields are concatenated in this order for hashing:
- * 1. project_content (UTF-8 bytes, NFC normalized)
- * 2. expiration_time (little-endian, minimal bytes)
- * 3. lovelace_amount (little-endian, minimal bytes)
- * 4. native_assets (raw concatenation of each asset's bytes)
+ * Serialized as Plutus Data Constructor 0 (CBOR tag 121) with fields:
+ * 1. project_content (ByteArray - UTF-8 encoded, NFC normalized)
+ * 2. deadline (Int - milliseconds)
+ * 3. lovelace_am (Int - micro-ADA)
+ * 4. tokens (List<FlatValue> - native assets)
  */
 export interface TaskData {
   /** Task description (max 140 characters) */
@@ -76,13 +78,8 @@ export interface TaskData {
  * ```
  */
 export function computeTaskHash(task: TaskData): string {
-  // Validate inputs
   validateTaskData(task);
-
-  // Encode task as raw bytes matching Aiken format
-  const bytes = encodeTaskAsRawBytes(task);
-
-  // Hash with Blake2b-256
+  const bytes = encodeTaskAsPlutusData(task);
   return blake.blake2bHex(bytes, undefined, 32);
 }
 
@@ -111,39 +108,155 @@ export function isValidTaskHash(hash: string): boolean {
 }
 
 /**
- * Debug function to show the raw byte encoding of a task.
+ * Debug function to show the CBOR encoding of a task.
  * Useful for comparing against on-chain data.
  *
  * @param task - Task data object
- * @returns Hex string of the encoded data (before hashing)
+ * @returns Hex string of the CBOR-encoded Plutus Data (before hashing)
  */
 export function debugTaskBytes(task: TaskData): string {
   validateTaskData(task);
-  const bytes = encodeTaskAsRawBytes(task);
+  const bytes = encodeTaskAsPlutusData(task);
   return uint8ArrayToHex(bytes);
 }
 
 // =============================================================================
-// Raw Byte Encoding (Internal) - Matches Aiken hash_project_data
+// Plutus Data CBOR Encoding (Internal)
 // =============================================================================
 
 /**
- * Encode task data as raw bytes matching Aiken's hash_project_data format.
+ * Encode task data as Plutus Data matching Aiken/Haskell serialization.
  *
- * Format: project_content ++ int_to_bbs(deadline) ++ int_to_bbs(lovelace) ++ combine_flat_val(tokens)
+ * Format: tag(121) + indefinite-array + [content, deadline, lovelace, tokens] + break
+ *
+ * The key insight is that Haskell's `serialiseData . toBuiltinData` uses
+ * indefinite-length CBOR arrays (0x9f ... 0xff) for Plutus Data constructors.
  *
  * @internal
  */
-function encodeTaskAsRawBytes(task: TaskData): Uint8Array {
-  // Normalize Unicode for consistent hashing
+function encodeTaskAsPlutusData(task: TaskData): Uint8Array {
   const normalizedContent = task.project_content.normalize("NFC");
+  const contentBytes = new TextEncoder().encode(normalizedContent);
 
   return concatUint8Arrays([
-    new TextEncoder().encode(normalizedContent),
-    intToBytesLittleEndian(task.expiration_time),
-    intToBytesLittleEndian(task.lovelace_amount),
-    combineNativeAssets(task.native_assets),
+    // Tag 121 (Plutus Data Constructor 0) + indefinite array start
+    new Uint8Array([0xd8, 121, 0x9f]),
+    // Field 1: project_content (ByteArray)
+    encodeCborBytes(contentBytes),
+    // Field 2: deadline (Int)
+    encodeCborUint(task.expiration_time),
+    // Field 3: lovelace_am (Int)
+    encodeCborUint(task.lovelace_amount),
+    // Field 4: tokens (List<FlatValue>)
+    encodeTokensList(task.native_assets),
+    // Break (end of indefinite array)
+    new Uint8Array([0xff]),
   ]);
+}
+
+/**
+ * Encode a list of native assets as Plutus Data.
+ *
+ * Each FlatValue is encoded as a Plutus Data constructor with:
+ * - PolicyId (ByteArray)
+ * - AssetName (ByteArray)
+ * - Quantity (Int)
+ *
+ * @internal
+ */
+function encodeTokensList(assets: readonly NativeAsset[]): Uint8Array {
+  if (assets.length === 0) {
+    // Empty definite-length array
+    return new Uint8Array([0x80]);
+  }
+
+  // Encode as indefinite-length array of FlatValue constructors
+  const parts: Uint8Array[] = [new Uint8Array([0x9f])]; // indefinite array start
+
+  for (const [policyId, tokenName, quantity] of assets) {
+    // Each FlatValue is Constructor 0 with 3 fields
+    parts.push(new Uint8Array([0xd8, 121, 0x9f])); // tag 121, indefinite array
+    parts.push(encodeCborBytes(hexToBytes(policyId)));
+    parts.push(encodeCborBytes(hexToBytes(tokenName)));
+    parts.push(encodeCborUint(quantity));
+    parts.push(new Uint8Array([0xff])); // break
+  }
+
+  parts.push(new Uint8Array([0xff])); // break (end of list)
+  return concatUint8Arrays(parts);
+}
+
+/**
+ * Maximum value for CBOR uint64 encoding.
+ * @internal
+ */
+const MAX_UINT64 = 18446744073709551615n; // 2^64 - 1
+
+/**
+ * Encode CBOR unsigned integer (major type 0).
+ *
+ * @internal
+ */
+function encodeCborUint(n: bigint): Uint8Array {
+  if (n < 0n) {
+    throw new Error("Negative integers not supported");
+  }
+  if (n > MAX_UINT64) {
+    throw new Error(
+      `Integer exceeds maximum CBOR uint64 value (got ${n}, max ${MAX_UINT64})`,
+    );
+  }
+
+  if (n < 24n) {
+    return new Uint8Array([Number(n)]);
+  } else if (n < 256n) {
+    return new Uint8Array([0x18, Number(n)]);
+  } else if (n < 65536n) {
+    return new Uint8Array([0x19, Number(n >> 8n) & 0xff, Number(n) & 0xff]);
+  } else if (n < 4294967296n) {
+    return new Uint8Array([
+      0x1a,
+      Number((n >> 24n) & 0xffn),
+      Number((n >> 16n) & 0xffn),
+      Number((n >> 8n) & 0xffn),
+      Number(n & 0xffn),
+    ]);
+  } else {
+    // 8-byte unsigned integer
+    return new Uint8Array([
+      0x1b,
+      Number((n >> 56n) & 0xffn),
+      Number((n >> 48n) & 0xffn),
+      Number((n >> 40n) & 0xffn),
+      Number((n >> 32n) & 0xffn),
+      Number((n >> 24n) & 0xffn),
+      Number((n >> 16n) & 0xffn),
+      Number((n >> 8n) & 0xffn),
+      Number(n & 0xffn),
+    ]);
+  }
+}
+
+/**
+ * Encode CBOR byte string (major type 2).
+ *
+ * @internal
+ */
+function encodeCborBytes(bytes: Uint8Array): Uint8Array {
+  const len = bytes.length;
+  let header: Uint8Array;
+
+  if (len < 24) {
+    header = new Uint8Array([0x40 + len]);
+  } else if (len < 256) {
+    header = new Uint8Array([0x58, len]);
+  } else if (len < 65536) {
+    header = new Uint8Array([0x59, (len >> 8) & 0xff, len & 0xff]);
+  } else {
+    throw new Error("Byte string too long for CBOR encoding");
+  }
+
+  return concatUint8Arrays([header, bytes]);
 }
 
 /**
@@ -153,14 +266,12 @@ function encodeTaskAsRawBytes(task: TaskData): Uint8Array {
  * @internal
  */
 function validateTaskData(task: TaskData): void {
-  // Validate project_content
   if (task.project_content.length > 140) {
     throw new Error(
       `project_content exceeds 140 characters (got ${task.project_content.length})`,
     );
   }
 
-  // Validate numeric fields
   if (task.expiration_time < 0n) {
     throw new Error("expiration_time must be non-negative");
   }
@@ -168,7 +279,6 @@ function validateTaskData(task: TaskData): void {
     throw new Error("lovelace_amount must be non-negative");
   }
 
-  // Validate native assets
   for (const [policyId, tokenName, quantity] of task.native_assets) {
     if (policyId.length !== 56) {
       throw new Error(
@@ -193,62 +303,8 @@ function validateTaskData(task: TaskData): void {
 }
 
 /**
- * Convert a non-negative bigint to little-endian byte representation.
- * Matches Aiken's integer_to_bytearray(False, 0, int).
- *
- * - False = little-endian byte order
- * - 0 = minimal byte length (no zero-padding)
- *
- * @param n - Non-negative bigint to convert
- * @returns Uint8Array with little-endian byte representation
- * @internal
- */
-function intToBytesLittleEndian(n: bigint): Uint8Array {
-  if (n < 0n) {
-    throw new Error("Negative integers not supported");
-  }
-  if (n === 0n) {
-    return new Uint8Array([0]);
-  }
-
-  const bytes: number[] = [];
-  let remaining = n;
-
-  while (remaining > 0n) {
-    bytes.push(Number(remaining & 0xffn));
-    remaining = remaining >> 8n;
-  }
-
-  return new Uint8Array(bytes);
-}
-
-/**
- * Combine native assets into raw bytes matching Aiken's combine_flat_val.
- * Format: policy_id ++ token_name ++ quantity for each asset.
- *
- * @param assets - Array of native assets
- * @returns Uint8Array of concatenated asset bytes
- * @internal
- */
-function combineNativeAssets(assets: readonly NativeAsset[]): Uint8Array {
-  if (assets.length === 0) {
-    return new Uint8Array([]);
-  }
-
-  const chunks: Uint8Array[] = [];
-  for (const [policyId, tokenName, quantity] of assets) {
-    chunks.push(hexToBytes(policyId));
-    chunks.push(hexToBytes(tokenName));
-    chunks.push(intToBytesLittleEndian(quantity));
-  }
-  return concatUint8Arrays(chunks);
-}
-
-/**
  * Convert hex string to Uint8Array.
  *
- * @param hex - Hexadecimal string (must be even length)
- * @returns Uint8Array of bytes
  * @internal
  */
 function hexToBytes(hex: string): Uint8Array {
@@ -256,14 +312,19 @@ function hexToBytes(hex: string): Uint8Array {
     return new Uint8Array([]);
   }
 
-  // Validation already done in validateTaskData, but defensive check
   if (hex.length % 2 !== 0) {
     throw new Error(`Invalid hex string: odd length (${hex.length})`);
   }
 
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    const byte = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    if (Number.isNaN(byte)) {
+      throw new Error(
+        `Invalid hex character at position ${i * 2}: "${hex.slice(i * 2, i * 2 + 2)}"`,
+      );
+    }
+    bytes[i] = byte;
   }
   return bytes;
 }

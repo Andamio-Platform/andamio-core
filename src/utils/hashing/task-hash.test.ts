@@ -8,34 +8,135 @@ import {
 import type { TaskData, NativeAsset } from "./task-hash";
 
 describe("computeTaskHash", () => {
-  // Golden tests - must match on-chain hashes
-  // TODO: Replace placeholder hashes with actual on-chain test vectors from Andamioscan
+  // All 7 on-chain test vectors from project 490e6da6be3dbfae3baa8431351dc148dd8bdebc62e2dd7772675e76
+  // All have expiration_time: 1782792000000n and native_assets: []
+  const ON_CHAIN_VECTORS: Array<{
+    title: string;
+    lovelace: bigint;
+    expected_hash: string;
+  }> = [
+    {
+      title: "Introduce Yourself",
+      lovelace: 5000000n,
+      expected_hash:
+        "b1e5c9234e8a4481da7cb3fb525fc54430f8df127ab9f10464ddc8a4e7560614",
+    },
+    {
+      title: "Review the Docs",
+      lovelace: 8000000n,
+      expected_hash:
+        "9d113eafdbe599d624c1ae3e545083e3ec7a053e14ebb6cb730eb3fb59eb3363",
+    },
+    {
+      title: "Find a Typo",
+      lovelace: 5000000n,
+      expected_hash:
+        "c79b778c46a26148c5a33ad669b3452ecf0263539270513003abef73c5858cb2",
+    },
+    {
+      title: "Attend a Sync Call",
+      lovelace: 8000000n,
+      expected_hash:
+        "090391c308370ca1846e6cf39641dc975e8b2f3e370fb812f61bebcacb6902aa",
+    },
+    {
+      title: "Test a Feature",
+      lovelace: 10000000n,
+      expected_hash:
+        "801eae4957a456034025e61f23f2a508eb8a6e15f8d55edb239712033ff06d18",
+    },
+    {
+      title: "Write a How-To",
+      lovelace: 15000000n,
+      expected_hash:
+        "b6ac09b203c7a81d1cd819bc6064eec2f713e64a6cc5a2fac16f864fcfeee949",
+    },
+    {
+      title: "Propose an Improvement",
+      lovelace: 5000000n,
+      expected_hash:
+        "eb14effb2a81bece91708a2fb2478bd36711b06804f1fa5fca049d0a9192c784",
+    },
+  ];
+
+  const DEADLINE = 1782792000000n;
+
   describe("on-chain compatibility", () => {
-    it.skip("matches known on-chain hash for simple task", () => {
+    for (const vector of ON_CHAIN_VECTORS) {
+      it(`matches on-chain hash for "${vector.title}"`, () => {
+        const task: TaskData = {
+          project_content: vector.title,
+          expiration_time: DEADLINE,
+          lovelace_amount: vector.lovelace,
+          native_assets: [],
+        };
+        const hash = computeTaskHash(task);
+        expect(hash).toBe(vector.expected_hash);
+      });
+    }
+  });
+
+  describe("CBOR encoding", () => {
+    it("uses Plutus Data Constructor 0 (tag 121)", () => {
       const task: TaskData = {
-        project_content: "Open Task #1",
-        expiration_time: 1769027280000n,
-        lovelace_amount: 15000000n,
+        project_content: "Test",
+        expiration_time: 1n,
+        lovelace_amount: 1n,
         native_assets: [],
       };
-      const hash = computeTaskHash(task);
-      // TODO: Replace with actual on-chain hash from Andamioscan
-      expect(hash).toBe("EXPECTED_HASH_FROM_ANDAMIOSCAN");
+      const bytes = debugTaskBytes(task);
+      // Should start with d8 79 (tag 121) and 9f (indefinite array)
+      expect(bytes.startsWith("d8799f")).toBe(true);
     });
 
-    it.skip("matches known on-chain hash for task with native assets", () => {
+    it("uses indefinite-length array encoding", () => {
       const task: TaskData = {
-        project_content: "Task with tokens",
-        expiration_time: 1700000000000n,
-        lovelace_amount: 1000000n,
-        native_assets: [
-          // TODO: Replace with real policy ID and token name from on-chain data
-          ["a".repeat(56), "746f6b656e6e616d65", 1000n],
-        ],
+        project_content: "Test",
+        expiration_time: 1n,
+        lovelace_amount: 1n,
+        native_assets: [],
       };
-      const hash = computeTaskHash(task);
-      // TODO: Replace with actual on-chain hash from Andamioscan
-      expect(hash).toBe("EXPECTED_HASH_FROM_ANDAMIOSCAN");
+      const bytes = debugTaskBytes(task);
+      // Should start with 9f (indefinite array) after tag and end with ff (break)
+      expect(bytes.slice(4, 6)).toBe("9f"); // after d879
+      expect(bytes.endsWith("ff")).toBe(true);
+    });
+
+    it("encodes empty tokens list as empty definite array (0x80)", () => {
+      const task: TaskData = {
+        project_content: "A",
+        expiration_time: 1n,
+        lovelace_amount: 1n,
+        native_assets: [],
+      };
+      const bytes = debugTaskBytes(task);
+      // Format: d8799f [content] [deadline] [lovelace] 80 ff
+      // The 80 (empty array) should be right before the final ff (break)
+      expect(bytes.slice(-4)).toBe("80ff");
+    });
+
+    it("encodes content as CBOR byte string", () => {
+      const task: TaskData = {
+        project_content: "Hi",
+        expiration_time: 1n,
+        lovelace_amount: 1n,
+        native_assets: [],
+      };
+      const bytes = debugTaskBytes(task);
+      // "Hi" = 2 bytes, so CBOR header is 0x42 (0x40 + 2), then 4869
+      expect(bytes).toContain("424869");
+    });
+
+    it("encodes integers as CBOR unsigned integers (big-endian)", () => {
+      const task: TaskData = {
+        project_content: "",
+        expiration_time: 0x12345678n,
+        lovelace_amount: 0n,
+        native_assets: [],
+      };
+      const bytes = debugTaskBytes(task);
+      // 0x12345678 as CBOR uint32: 1a 12345678 (big-endian, NOT little-endian)
+      expect(bytes).toContain("1a12345678");
     });
   });
 
@@ -52,7 +153,7 @@ describe("computeTaskHash", () => {
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    it("encodes zero as single byte [0x00]", () => {
+    it("handles empty content", () => {
       const task: TaskData = {
         project_content: "",
         expiration_time: 0n,
@@ -60,22 +161,8 @@ describe("computeTaskHash", () => {
         native_assets: [],
       };
       const bytes = debugTaskBytes(task);
-      // Empty content + 0x00 for expiration + 0x00 for lovelace = "0000"
-      expect(bytes).toBe("0000");
-    });
-
-    it("handles empty native assets as empty bytes", () => {
-      const task: TaskData = {
-        project_content: "Test",
-        expiration_time: 1n,
-        lovelace_amount: 1n,
-        native_assets: [],
-      };
-      const bytes = debugTaskBytes(task);
-      // Should be: "Test" (54657374) + 0x01 + 0x01 = "5465737401 01"
-      expect(bytes).toBe("546573740101");
-      // No CBOR empty array marker (0x80)
-      expect(bytes).not.toContain("80");
+      // Empty byte string is 0x40
+      expect(bytes).toContain("40");
     });
 
     it("handles empty token name", () => {
@@ -99,21 +186,8 @@ describe("computeTaskHash", () => {
       expect(computeTaskHash(task)).toHaveLength(64);
     });
 
-    it("encodes large integers in little-endian format", () => {
-      const task: TaskData = {
-        project_content: "",
-        expiration_time: 0x12345678n,
-        lovelace_amount: 0n,
-        native_assets: [],
-      };
-      const bytes = debugTaskBytes(task);
-      // 0x12345678 in little-endian is 78 56 34 12
-      // Then 0x00 for lovelace
-      expect(bytes).toBe("7856341200");
-    });
-
     it("normalizes Unicode strings (NFC)", () => {
-      // café with combining acute accent vs precomposed
+      // cafe with combining acute accent vs precomposed
       const task1: TaskData = {
         project_content: "cafe\u0301", // e + combining acute
         expiration_time: 1n,
@@ -121,7 +195,7 @@ describe("computeTaskHash", () => {
         native_assets: [],
       };
       const task2: TaskData = {
-        project_content: "caf\u00e9", // precomposed é
+        project_content: "caf\u00e9", // precomposed e
         expiration_time: 1n,
         lovelace_amount: 1n,
         native_assets: [],
@@ -326,6 +400,21 @@ describe("verifyTaskHash", () => {
     const hash = computeTaskHash(task);
     expect(verifyTaskHash(task, hash.toUpperCase())).toBe(true);
   });
+
+  it("verifies on-chain test vector", () => {
+    const task: TaskData = {
+      project_content: "Introduce Yourself",
+      expiration_time: 1782792000000n,
+      lovelace_amount: 5000000n,
+      native_assets: [],
+    };
+    expect(
+      verifyTaskHash(
+        task,
+        "b1e5c9234e8a4481da7cb3fb525fc54430f8df127ab9f10464ddc8a4e7560614",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("isValidTaskHash", () => {
@@ -359,7 +448,7 @@ describe("isValidTaskHash", () => {
 });
 
 describe("debugTaskBytes", () => {
-  it("returns hex representation of encoded bytes", () => {
+  it("returns hex representation of CBOR-encoded Plutus Data", () => {
     const task: TaskData = {
       project_content: "Hi",
       expiration_time: 1n,
@@ -367,8 +456,9 @@ describe("debugTaskBytes", () => {
       native_assets: [],
     };
     const bytes = debugTaskBytes(task);
-    // "Hi" = 0x48 0x69, then 0x01 for expiration, 0x02 for lovelace
-    expect(bytes).toBe("48690102");
+    // Should be Plutus Data: d879 9f 42 4869 01 02 80 ff
+    // tag 121, indef array, 2-byte string "Hi", int 1, int 2, empty array, break
+    expect(bytes).toBe("d8799f42486901028 0ff".replace(/ /g, ""));
   });
 
   it("validates input before encoding", () => {
