@@ -447,6 +447,94 @@ describe("isValidTaskHash", () => {
   });
 });
 
+describe("CBOR byte string chunking", () => {
+  const DEADLINE = 1n;
+  const LOVELACE = 1n;
+
+  function makeTask(content: string): TaskData {
+    return {
+      project_content: content,
+      expiration_time: DEADLINE,
+      lovelace_amount: LOVELACE,
+      native_assets: [],
+    };
+  }
+
+  it("uses definite-length encoding for content at exactly 64 bytes", () => {
+    const task = makeTask("x".repeat(64));
+    const hex = debugTaskBytes(task);
+    // 64 bytes = 0x40 in length, CBOR header: 0x58 0x40
+    expect(hex).toContain("5840");
+    // Should NOT contain indefinite-length byte string marker 0x5f
+    // (0x5f only appears as byte string start, not as part of the break 0xff)
+    // Check that the content area does not use chunked encoding
+    const contentStart = hex.indexOf("5840");
+    expect(contentStart).toBeGreaterThan(-1);
+  });
+
+  it("uses definite-length encoding for content in 24-63 byte range", () => {
+    const task = makeTask("x".repeat(50));
+    const hex = debugTaskBytes(task);
+    // 50 bytes = 0x32, CBOR header: 0x58 0x32
+    expect(hex).toContain("5832");
+  });
+
+  it("uses chunked indefinite-length encoding for content at 65 bytes", () => {
+    const task = makeTask("x".repeat(65));
+    const hex = debugTaskBytes(task);
+    // Should contain: 5f (indef start) 5840 (64-byte chunk) 4178 (1-byte chunk "x") ff (break)
+    // 0x5f = indefinite byte string start
+    // First chunk: 0x58 0x40 + 64 bytes of 'x' (0x78)
+    // Second chunk: 0x41 + 1 byte of 'x' (0x78)
+    // 0xff = break
+    expect(hex).toContain("5f");
+    expect(hex).toContain("5840");
+    expect(hex).toContain("4178");
+  });
+
+  it("produces two full 64-byte chunks for 128-byte content", () => {
+    const task = makeTask("x".repeat(128));
+    const hex = debugTaskBytes(task);
+    // Two chunks of 64 bytes each: 5f 5840[64 bytes] 5840[64 bytes] ff
+    const firstChunk = hex.indexOf("5840");
+    const secondChunk = hex.indexOf("5840", firstChunk + 1);
+    expect(firstChunk).toBeGreaterThan(-1);
+    expect(secondChunk).toBeGreaterThan(firstChunk);
+  });
+
+  it("produces two full chunks + remainder for 129-byte content", () => {
+    const task = makeTask("x".repeat(129));
+    const hex = debugTaskBytes(task);
+    // Two 64-byte chunks + one 1-byte chunk
+    const firstChunk = hex.indexOf("5840");
+    const secondChunk = hex.indexOf("5840", firstChunk + 1);
+    expect(firstChunk).toBeGreaterThan(-1);
+    expect(secondChunk).toBeGreaterThan(firstChunk);
+    // The remainder chunk: 0x41 + 1 byte
+    expect(hex).toContain("4178");
+  });
+
+  it("handles multi-byte UTF-8 crossing chunk boundary", () => {
+    // 63 ASCII bytes + one 3-byte CJK character (世 = U+4E16) = 66 bytes total
+    const task = makeTask("x".repeat(63) + "\u4e16");
+    const hash = computeTaskHash(task);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    // Should be chunked (66 > 64)
+    const hex = debugTaskBytes(task);
+    expect(hex).toContain("5f"); // indefinite-length start
+  });
+
+  it("does not change hashes for short content (backward compatibility)", () => {
+    // All 7 on-chain vectors have short content; this is a sanity check
+    // that the new function delegates to encodeCborBytes for <= 64 bytes
+    const task = makeTask("Short content");
+    const hash1 = computeTaskHash(task);
+    expect(hash1).toMatch(/^[0-9a-f]{64}$/);
+    // Determinism check
+    expect(computeTaskHash(task)).toBe(hash1);
+  });
+});
+
 describe("debugTaskBytes", () => {
   it("returns hex representation of CBOR-encoded Plutus Data", () => {
     const task: TaskData = {

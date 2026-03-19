@@ -141,8 +141,8 @@ function encodeTaskAsPlutusData(task: TaskData): Uint8Array {
   return concatUint8Arrays([
     // Tag 121 (Plutus Data Constructor 0) + indefinite array start
     new Uint8Array([0xd8, 121, 0x9f]),
-    // Field 1: project_content (ByteArray)
-    encodeCborBytes(contentBytes),
+    // Field 1: project_content (ByteArray) - uses Plutus chunking for >64 bytes
+    encodePlutusBuiltinByteString(contentBytes),
     // Field 2: deadline (Int)
     encodeCborUint(task.expiration_time),
     // Field 3: lovelace_am (Int)
@@ -185,6 +185,13 @@ function encodeTokensList(assets: readonly NativeAsset[]): Uint8Array {
   parts.push(new Uint8Array([0xff])); // break (end of list)
   return concatUint8Arrays(parts);
 }
+
+/**
+ * Plutus chunk size for byte strings.
+ * Strings longer than this are encoded as indefinite-length chunked byte strings.
+ * @internal
+ */
+const PLUTUS_CHUNK_SIZE = 64;
 
 /**
  * Maximum value for CBOR uint64 encoding.
@@ -235,6 +242,32 @@ function encodeCborUint(n: bigint): Uint8Array {
       Number(n & 0xffn),
     ]);
   }
+}
+
+/**
+ * Encode a byte buffer matching Plutus's stringToBuiltinByteString.
+ *
+ * - Bytes <= 64: regular CBOR byte string (definite-length)
+ * - Bytes > 64: indefinite-length chunked byte string (64-byte chunks)
+ *
+ * @internal
+ */
+function encodePlutusBuiltinByteString(buffer: Uint8Array): Uint8Array {
+  if (buffer.length <= PLUTUS_CHUNK_SIZE) {
+    return encodeCborBytes(buffer);
+  }
+
+  // Chunked indefinite-length byte string
+  const parts: Uint8Array[] = [new Uint8Array([0x5f])]; // indefinite start
+  for (let i = 0; i < buffer.length; i += PLUTUS_CHUNK_SIZE) {
+    const chunk = buffer.subarray(
+      i,
+      Math.min(i + PLUTUS_CHUNK_SIZE, buffer.length),
+    );
+    parts.push(encodeCborBytes(chunk));
+  }
+  parts.push(new Uint8Array([0xff])); // break
+  return concatUint8Arrays(parts);
 }
 
 /**
