@@ -465,11 +465,10 @@ describe("CBOR byte string chunking", () => {
     const hex = debugTaskBytes(task);
     // 64 bytes = 0x40 in length, CBOR header: 0x58 0x40
     expect(hex).toContain("5840");
-    // Should NOT contain indefinite-length byte string marker 0x5f
-    // (0x5f only appears as byte string start, not as part of the break 0xff)
-    // Check that the content area does not use chunked encoding
-    const contentStart = hex.indexOf("5840");
-    expect(contentStart).toBeGreaterThan(-1);
+    // Chunking threshold is <=64: must NOT use indefinite-length marker 0x5f.
+    // For this input (ASCII x's + small ints + empty assets list), 0x5f does
+    // not legitimately appear anywhere else, so this assertion is reliable.
+    expect(hex).not.toContain("5f");
   });
 
   it("uses definite-length encoding for content in 24-63 byte range", () => {
@@ -477,6 +476,15 @@ describe("CBOR byte string chunking", () => {
     const hex = debugTaskBytes(task);
     // 50 bytes = 0x32, CBOR header: 0x58 0x32
     expect(hex).toContain("5832");
+    expect(hex).not.toContain("5f");
+  });
+
+  it("uses definite-length encoding for content at exactly 63 bytes (just below threshold)", () => {
+    const task = makeTask("x".repeat(63));
+    const hex = debugTaskBytes(task);
+    // 63 bytes = 0x3f, CBOR header: 0x58 0x3f
+    expect(hex).toContain("583f");
+    expect(hex).not.toContain("5f58"); // no chunked start
   });
 
   it("uses chunked indefinite-length encoding for content at 65 bytes", () => {
@@ -514,6 +522,55 @@ describe("CBOR byte string chunking", () => {
     expect(hex).toContain("4178");
   });
 
+  it("produces exactly two full chunks with no remainder for 128-byte content", () => {
+    // Regression guard: loop termination at i=128 must not produce a spurious
+    // 0-byte third chunk (0x40 with empty data).
+    const task = makeTask("x".repeat(128));
+    const hex = debugTaskBytes(task);
+    // Two 64-byte chunks — no 0x40 header after the second chunk except break
+    // Find both 5840s; ensure after the second one the next CBOR marker is 0xff
+    const firstChunk = hex.indexOf("5840");
+    const secondChunk = hex.indexOf("5840", firstChunk + 1);
+    const thirdChunk = hex.indexOf("5840", secondChunk + 1);
+    expect(thirdChunk).toBe(-1);
+    // Should not contain 5f40 (indef-start followed by empty-chunk marker)
+    expect(hex).not.toMatch(/5840(78){64}40ff/); // no empty chunk before break
+  });
+
+  it("produces three full 64-byte chunks for 192-byte content", () => {
+    // Edge: 3 full chunks with no remainder — loop termination at an exact multiple.
+    // 64 CJK chars × 3 bytes = 192 bytes, stays under the 140-char validation limit.
+    const task = makeTask("\u4e16".repeat(64));
+    const hex = debugTaskBytes(task);
+    const firstChunk = hex.indexOf("5840");
+    const secondChunk = hex.indexOf("5840", firstChunk + 1);
+    const thirdChunk = hex.indexOf("5840", secondChunk + 1);
+    const fourthChunk = hex.indexOf("5840", thirdChunk + 1);
+    expect(firstChunk).toBeGreaterThan(-1);
+    expect(secondChunk).toBeGreaterThan(firstChunk);
+    expect(thirdChunk).toBeGreaterThan(secondChunk);
+    expect(fourthChunk).toBe(-1);
+  });
+
+  it("produces four full chunks for 256-byte content", () => {
+    // 85 CJK chars × 3 bytes + 1 ASCII = 256 bytes, 86 chars (under 140-char limit)
+    const task = makeTask("\u4e16".repeat(85) + "x");
+    const hex = debugTaskBytes(task);
+    // Count occurrences of "5840" (64-byte chunk header) — should be exactly 4
+    const matches = hex.match(/5840/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBe(4);
+  });
+
+  it("handles content at exactly 127 bytes (one chunk + 63-byte remainder)", () => {
+    const task = makeTask("x".repeat(127));
+    const hex = debugTaskBytes(task);
+    // One 64-byte chunk header + one 63-byte chunk header
+    expect(hex).toContain("5840"); // 64-byte chunk
+    expect(hex).toContain("583f"); // 63-byte remainder
+    expect(hex).toContain("5f"); // chunked (indefinite start)
+  });
+
   it("handles multi-byte UTF-8 crossing chunk boundary", () => {
     // 63 ASCII bytes + one 3-byte CJK character (世 = U+4E16) = 66 bytes total
     const task = makeTask("x".repeat(63) + "\u4e16");
@@ -524,13 +581,13 @@ describe("CBOR byte string chunking", () => {
     expect(hex).toContain("5f"); // indefinite-length start
   });
 
-  it("does not change hashes for short content (backward compatibility)", () => {
-    // All 7 on-chain vectors have short content; this is a sanity check
-    // that the new function delegates to encodeCborBytes for <= 64 bytes
+  it("short content path is deterministic (baseline regression guard)", () => {
+    // Authoritative backward-compat verification lives in the 7 on-chain test
+    // vectors earlier in this file. This test just confirms that the <=64 byte
+    // path is deterministic and produces valid hash format.
     const task = makeTask("Short content");
     const hash1 = computeTaskHash(task);
     expect(hash1).toMatch(/^[0-9a-f]{64}$/);
-    // Determinism check
     expect(computeTaskHash(task)).toBe(hash1);
   });
 });

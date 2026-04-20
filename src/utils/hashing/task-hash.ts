@@ -176,6 +176,8 @@ function encodeTokensList(assets: readonly NativeAsset[]): Uint8Array {
   for (const [policyId, tokenName, quantity] of assets) {
     // Each FlatValue is Constructor 0 with 3 fields
     parts.push(new Uint8Array([0xd8, 121, 0x9f])); // tag 121, indefinite array
+    // policyId (28 bytes) and tokenName (max 32 bytes) are always <= 64 bytes
+    // by protocol constraint, so no Plutus chunking is needed here.
     parts.push(encodeCborBytes(hexToBytes(policyId)));
     parts.push(encodeCborBytes(hexToBytes(tokenName)));
     parts.push(encodeCborUint(quantity));
