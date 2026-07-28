@@ -56,7 +56,7 @@ All vectors have `expiration_time: 1782792000000n` (milliseconds) and `native_as
 
 ### On-Chain Algorithm (Aiken)
 
-**File:** `/Users/james/projects/01-projects/ls-project/lib/types/project.ak`
+**File:** `$REPOS/ls-project/lib/types/project.ak`
 
 ```aiken
 pub fn hash_project_data(project_data: ProjectData) -> ByteArray {
@@ -93,7 +93,7 @@ pub type ProjectData {
 
 ### Off-Chain Algorithm (Haskell Atlas API)
 
-**File:** `/Users/james/projects/01-projects/andamio-atlas-api-v2/andamio-tx/TxBuilding/Andamio/Utility/Types/Project.hs`
+**File:** `$REPOS/andamio-atlas-api-v2/andamio-tx/TxBuilding/Andamio/Utility/Types/Project.hs`
 
 ```haskell
 hashProjectData :: TaskData -> BuiltinByteString
@@ -210,8 +210,8 @@ Once we understand the exact encoding:
 
 - Current implementation: `src/utils/hashing/task-hash.ts`
 - Previous fix plan: `docs/plans/2026-02-26-fix-task-hash-aiken-match-plan.md`
-- Aiken source: `/Users/james/projects/01-projects/ls-project/lib/types/project.ak`
-- Haskell source: `/Users/james/projects/01-projects/andamio-atlas-api-v2/andamio-tx/TxBuilding/Andamio/Utility/Types/Project.hs`
+- Aiken source: `$REPOS/ls-project/lib/types/project.ak`
+- Haskell source: `$REPOS/andamio-atlas-api-v2/andamio-tx/TxBuilding/Andamio/Utility/Types/Project.hs`
 
 ### Related Issues
 
