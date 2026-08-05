@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-05
+
+**Hash compatibility guarantee: no hash output changes.** Canonical-v1 is a blessing of `computeCommitmentHash`'s existing behavior — every previously produced hash still verifies. `legacyHashV0` and `verifyEvidenceAgainstEras` are additive. All deprecated aliases are retained.
+
+### Added
+
+- Frozen **canonical-v1** specification for the commitment evidence hash: `docs/specs/commitment-hash-v1.md`. Any behavioral change is a new version, never an edit.
+- Golden-vector fixture `src/utils/hashing/vectors/commitment-hash-vectors.json` — 12 characterization vectors (boundary whitespace, code blocks, empty/whitespace-only paragraphs, tables, unicode, NFC/NFD, serialization escaping, number forms) as the cross-implementation contract; first test coverage for `commitment-hash.ts` (parity-vector branch merged)
+- `legacyHashV0` (deprecated) — faithful port of app-v2's pre-canonical non-trimming hasher, cross-validated against the original implementation; for era-aware verification only. Note: v0 remains app-v2's active assignment write path until andamio-app-v2#832 lands.
+- `verifyEvidenceAgainstEras(evidence, onChainHash)` — tries canonical-v1 then legacy v0 (guarded, never throws) and reports which algorithm matched
+- `EraVerificationResult` type
+- PR CI workflow running typecheck and the test suite
+
+### Fixed
+
+- README hashing examples and API-table signatures now match the actual function signatures (`verifyCommitmentHash(evidence, expectedHash)`, `verifyTaskHash(taskData, expectedHash)`, `computeSltHash(slts)`)
+
+## [0.3.1] - 2026-05-07
+
+### Fixed
+
+- `computeTaskHash`: CBOR byte-string chunking for content longer than 64 bytes, matching on-chain `serialise_data` behavior (release published 2026-05-07; fix landed 2026-03-19)
+
+## [0.3.0] - 2026-03-06
+
+### Fixed
+
+- `computeTaskHash` reverted to CBOR/Plutus Data encoding to match the updated on-chain Aiken validator (supersedes the 0.2.0 raw-byte encoding)
+
+### Security
+
+- Bumped rollup to fix a path-traversal vulnerability
+
 ## [0.2.0] - 2026-02-26
 
 ### Breaking Changes
