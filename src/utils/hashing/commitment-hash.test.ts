@@ -45,6 +45,26 @@ const GOLDEN_VECTORS = vectorsFixture.vectors as CommitmentHashVector[];
 // other repo — otherwise CLI-submitted evidence won't match gateway-
 // computed commitments on-chain.
 describe("golden vectors (canonical v1)", () => {
+  it("fixture integrity: contains exactly the 12 frozen vectors", () => {
+    // Tripwire against silent vector deletion or truncation — changing a
+    // frozen hash already fails the loop tests below; this catches a
+    // vector quietly disappearing.
+    expect(GOLDEN_VECTORS.map((v) => v.id)).toEqual([
+      "cross-language-parity-bold",
+      "boundary-whitespace-marked-runs",
+      "code-block-indent-and-trailing-newline",
+      "empty-paragraph",
+      "whitespace-only-paragraph",
+      "table-document",
+      "unicode-text",
+      "exotic-whitespace-trim-set",
+      "unicode-nfc-composed",
+      "unicode-nfd-decomposed",
+      "json-serialization-escapes",
+      "number-form-probes",
+    ]);
+  });
+
   it("includes the cross-language parity vector (andamio-cli Go twin)", () => {
     const parity = GOLDEN_VECTORS.find(
       (v) => v.id === "cross-language-parity-bold",
