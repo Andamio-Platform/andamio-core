@@ -5,43 +5,71 @@ import {
   isValidCommitmentHash,
   normalizeForHashing,
 } from "./commitment-hash";
+import vectorsFixture from "./vectors/commitment-hash-vectors.json";
 
-describe("computeCommitmentHash", () => {
-  // Cross-language parity vector. The Go port of this algorithm lives in
-  // andamio-cli at cmd/andamio/helpers.go (normalizeForHashing +
-  // wrapEvidence) and cmd/andamio/commitment_hash_parity_test.go pins the
-  // SAME input and expected hash on the Go side. Both sides must agree on:
-  //   - key sorting (alphabetical, recursive)
-  //   - string trimming (leading/trailing only; interior whitespace
-  //     preserved)
-  //   - null / undefined handling (undefined dropped, null preserved)
-  //   - JSON serialization + UTF-8 encoding + Blake2b-256
-  //
-  // If this test changes (either side), update the twin vector in the
-  // other repo — otherwise CLI-submitted evidence won't match gateway-
-  // computed commitments on-chain.
-  it("matches the cross-language parity vector (andamio-cli Go port)", () => {
-    const doc = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "text",
-              text: "My evidence submission",
-              marks: [{ type: "bold", attrs: { level: 1 } }],
-            },
-          ],
-        },
-      ],
-    };
+type CommitmentHashVector = {
+  id: string;
+  description: string;
+  input: unknown;
+  canonicalJson: string;
+  v1Hash: string;
+};
 
-    expect(computeCommitmentHash(doc)).toBe(
+const GOLDEN_VECTORS = vectorsFixture.vectors as CommitmentHashVector[];
+
+// Golden vectors for the canonical-v1 algorithm. The hashes were generated
+// by running computeCommitmentHash and FROZEN as literals in the fixture —
+// if any of these tests fail, the implementation regressed; never
+// regenerate the fixture to match new code. Each fixture entry's
+// description flags deliberate behaviors (per-run trimming, trimming
+// inside code blocks, no Unicode NFC normalization) that must not be
+// "fixed".
+//
+// Cross-language parity: the fixture entry "cross-language-parity-bold"
+// (expected hash
+// 8bd3d0b5a9c157005616a34f3a6ec7ba5d4b4961cc277d408ddac8e86a17434f)
+// is mirrored by the Go port of this algorithm in andamio-cli at
+// cmd/andamio/helpers.go (normalizeForHashing + wrapEvidence), pinned by
+// cmd/andamio/commitment_hash_parity_test.go with the SAME input and
+// expected hash. Both sides must agree on:
+//   - key sorting (alphabetical, recursive)
+//   - string trimming (leading/trailing only; interior whitespace
+//     preserved)
+//   - null / undefined handling (undefined dropped, null preserved)
+//   - JSON serialization + UTF-8 encoding + Blake2b-256
+//
+// If that vector changes (either side), update the twin vector in the
+// other repo — otherwise CLI-submitted evidence won't match gateway-
+// computed commitments on-chain.
+describe("golden vectors (canonical v1)", () => {
+  it("includes the cross-language parity vector (andamio-cli Go twin)", () => {
+    const parity = GOLDEN_VECTORS.find(
+      (v) => v.id === "cross-language-parity-bold",
+    );
+    expect(parity?.v1Hash).toBe(
       "8bd3d0b5a9c157005616a34f3a6ec7ba5d4b4961cc277d408ddac8e86a17434f",
     );
   });
 
+  for (const vector of GOLDEN_VECTORS) {
+    it(`matches frozen canonical JSON and v1 hash for "${vector.id}"`, () => {
+      expect(JSON.stringify(normalizeForHashing(vector.input))).toBe(
+        vector.canonicalJson,
+      );
+      expect(computeCommitmentHash(vector.input)).toBe(vector.v1Hash);
+    });
+
+    it(`is idempotent over canonical JSON for "${vector.id}"`, () => {
+      // Hashing the already-normalized form must yield the same hash
+      // (normalization is a fixed point).
+      expect(computeCommitmentHash(JSON.parse(vector.canonicalJson))).toBe(
+        vector.v1Hash,
+      );
+    });
+  }
+});
+
+describe("computeCommitmentHash", () => {
   it("produces a 64-character lowercase hex hash", () => {
     const hash = computeCommitmentHash({ type: "doc", content: [] });
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
@@ -71,28 +99,10 @@ describe("computeCommitmentHash", () => {
 });
 
 describe("verifyCommitmentHash", () => {
-  it("returns true for a hash that matches the parity vector", () => {
-    const doc = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "text",
-              text: "My evidence submission",
-              marks: [{ type: "bold", attrs: { level: 1 } }],
-            },
-          ],
-        },
-      ],
-    };
-    expect(
-      verifyCommitmentHash(
-        doc,
-        "8bd3d0b5a9c157005616a34f3a6ec7ba5d4b4961cc277d408ddac8e86a17434f",
-      ),
-    ).toBe(true);
+  it("returns true for each golden vector's frozen hash", () => {
+    for (const vector of GOLDEN_VECTORS) {
+      expect(verifyCommitmentHash(vector.input, vector.v1Hash)).toBe(true);
+    }
   });
 
   it("is case-insensitive on the expected hash", () => {
