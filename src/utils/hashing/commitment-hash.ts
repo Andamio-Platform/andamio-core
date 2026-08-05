@@ -204,6 +204,198 @@ export function verifyEvidenceDetailed(
 }
 
 // =============================================================================
+// Legacy (pre-canonical-v1) Algorithm and Era-Aware Verification
+// =============================================================================
+
+/**
+ * Normalizes a value using the legacy (v0) rules from andamio-app-v2.
+ *
+ * Faithful port of `normalizeContentStructure` in
+ * andamio-app-v2/src/lib/hashing.ts. Differences from `normalizeForHashing`:
+ * - NO string trimming
+ * - Falsy values (including "" and 0) hit the primitive base case as-is
+ * - Objects recurse into EVERY key with no explicit undefined-drop
+ *   (JSON.stringify drops undefined-valued keys later)
+ *
+ * @param content - Any value
+ * @returns Legacy-normalized value
+ * @internal
+ */
+function normalizeForLegacyHashV0(content: unknown): unknown {
+  // BASE CASE 1: Handle primitive values (strings, numbers, null, etc.)
+  // Preserves the original's exact branching: any falsy value (null,
+  // undefined, "", 0, false, NaN) returns as-is.
+  if (!content || typeof content !== "object") {
+    return content;
+  }
+
+  // BASE CASE 2: Handle arrays
+  // undefined elements stay undefined here; JSON.stringify serializes
+  // them as null later (same as the original).
+  if (Array.isArray(content)) {
+    return content.map(normalizeForLegacyHashV0);
+  }
+
+  // RECURSIVE CASE: Handle objects (sort keys, recurse into every key)
+  const normalized: Record<string, unknown> = {};
+  const sortedKeys = Object.keys(content as Record<string, unknown>).sort();
+  for (const key of sortedKeys) {
+    normalized[key] = normalizeForLegacyHashV0(
+      (content as Record<string, unknown>)[key],
+    );
+  }
+  return normalized;
+}
+
+/**
+ * Computes the legacy (v0) commitment hash from evidence content.
+ *
+ * Faithful port of andamio-app-v2's `hashNormalizedContent`
+ * (src/lib/hashing.ts): legacy normalization (sort keys, NO trimming) →
+ * JSON.stringify → UTF-8 bytes → Blake2b-256 → lowercase hex. The one
+ * deliberate difference from the original: top-level input that is not
+ * JSON-serializable (undefined, a function, a bare symbol) throws a
+ * descriptive Error instead of crashing with an unhelpful TypeError.
+ *
+ * @deprecated This is the pre-canonical-v1 algorithm (no string trimming).
+ * It remains andamio-app-v2's ACTIVE assignment write path until
+ * Andamio-Platform/andamio-app-v2#832 lands, so v0-hashed rows are still
+ * being written on-chain — a growing set, not a closed era. This export
+ * exists for era-aware verification of those rows only (see
+ * `verifyEvidenceAgainstEras`) — NEVER hash new content with it; use
+ * `computeCommitmentHash`.
+ *
+ * @param evidence - The evidence content (Tiptap JSON document or any JSON-serializable data)
+ * @returns 64-character lowercase hex string (Blake2b-256 hash)
+ * @throws Error if the evidence is not JSON-serializable at the top level
+ *
+ * @example
+ * ```typescript
+ * import { legacyHashV0, computeCommitmentHash } from "@andamio/core/hashing";
+ *
+ * const doc = {
+ *   type: "doc",
+ *   content: [
+ *     { type: "paragraph", content: [{ type: "text", text: "padded  " }] }
+ *   ]
+ * };
+ *
+ * legacyHashV0(doc) !== computeCommitmentHash(doc);
+ * // true - v0 preserves the boundary whitespace that v1 trims
+ * ```
+ */
+export function legacyHashV0(evidence: unknown): string {
+  const normalized = normalizeForLegacyHashV0(evidence);
+  const jsonString = JSON.stringify(normalized);
+  if (jsonString === undefined) {
+    throw new Error(
+      `legacyHashV0: evidence is not JSON-serializable (JSON.stringify returned undefined for input of type ${typeof evidence})`,
+    );
+  }
+  const bytes = new TextEncoder().encode(jsonString);
+  return blake.blake2bHex(bytes, undefined, 32);
+}
+
+/**
+ * Result of verifying evidence against an on-chain hash across hash eras
+ */
+export type EraVerificationResult = {
+  /** Whether the evidence matches the on-chain hash under any supported algorithm */
+  isValid: boolean;
+  /** Which algorithm matched ("v1" canonical, "v0" legacy), or null if none */
+  algorithm: "v1" | "v0" | null;
+  /** The hashes computed from the evidence (v0 only present when it was computed) */
+  computedHashes: { v1: string; v0?: string };
+  /** The expected hash (from on-chain) */
+  expectedHash: string;
+  /** Human-readable status message */
+  message: string;
+};
+
+/**
+ * Verifies evidence against an on-chain hash, trying each supported hash era.
+ *
+ * Tries the canonical v1 algorithm (`computeCommitmentHash`) first, then
+ * falls back to the legacy v0 algorithm (`legacyHashV0`) for rows written
+ * by andamio-app-v2's pre-canonical write path. Never throws: if the v0
+ * hash cannot be computed for the input (e.g. `undefined` evidence), the
+ * v0 leg is skipped and the result reports the v1 miss.
+ *
+ * CAVEAT — `algorithm` is evidence, not proof, of era: v0 and v1 produce
+ * IDENTICAL hashes for any document with no boundary whitespace, and a
+ * v1 match is reported without ever computing v0. Consumers should also
+ * treat v0 matches on rows written after andamio-app-v2 unifies on the
+ * canonical algorithm (Andamio-Platform/andamio-app-v2#832) as suspect.
+ *
+ * @param evidence - The evidence content to verify
+ * @param onChainHash - The hash from on-chain data
+ * @returns Era-aware verification result (never throws)
+ */
+export function verifyEvidenceAgainstEras(
+  evidence: unknown,
+  onChainHash: string,
+): EraVerificationResult {
+  if (!isValidCommitmentHash(onChainHash)) {
+    return {
+      isValid: false,
+      algorithm: null,
+      computedHashes: { v1: "" },
+      expectedHash: onChainHash,
+      message: `Invalid on-chain hash format: expected 64 hex characters, got "${onChainHash}"`,
+    };
+  }
+
+  const expectedHash = onChainHash.toLowerCase();
+  const v1Hash = computeCommitmentHash(evidence);
+
+  if (v1Hash === expectedHash) {
+    return {
+      isValid: true,
+      algorithm: "v1",
+      computedHashes: { v1: v1Hash },
+      expectedHash,
+      message: "Evidence matches on-chain commitment (canonical v1 algorithm)",
+    };
+  }
+
+  // Guarded v0 leg: legacyHashV0 throws for non-JSON-serializable input
+  // (including undefined evidence) — skip v0 rather than propagate.
+  let v0Hash: string;
+  try {
+    v0Hash = legacyHashV0(evidence);
+  } catch {
+    return {
+      isValid: false,
+      algorithm: null,
+      computedHashes: { v1: v1Hash },
+      expectedHash,
+      message:
+        "Evidence does not match on-chain commitment (legacy v0 hash not computable for this input)",
+    };
+  }
+
+  if (v0Hash === expectedHash) {
+    return {
+      isValid: true,
+      algorithm: "v0",
+      computedHashes: { v1: v1Hash, v0: v0Hash },
+      expectedHash,
+      message:
+        "Evidence matches on-chain commitment via the legacy v0 (pre-trimming) algorithm",
+    };
+  }
+
+  return {
+    isValid: false,
+    algorithm: null,
+    computedHashes: { v1: v1Hash, v0: v0Hash },
+    expectedHash,
+    message:
+      "Evidence does not match on-chain commitment under any supported algorithm - content may have been modified",
+  };
+}
+
+// =============================================================================
 // Backwards Compatibility Aliases (deprecated)
 // =============================================================================
 
