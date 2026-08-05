@@ -367,7 +367,7 @@
               "float": 3.14159,
               "tiny": 1e-7,
               "huge": 1e+21,
-              "negZero": 0
+              "negZero": -0
             },
             "content": [
               {

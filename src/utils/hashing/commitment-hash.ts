@@ -117,10 +117,12 @@ export function normalizeForHashing(value: unknown): unknown {
  * // Use this hash as commitment_hash in the transaction
  * ```
  */
+const textEncoder = new TextEncoder();
+
 export function computeCommitmentHash(evidence: unknown): string {
   const normalized = normalizeForHashing(evidence);
   const jsonString = JSON.stringify(normalized);
-  const bytes = new TextEncoder().encode(jsonString);
+  const bytes = textEncoder.encode(jsonString);
   return blake.blake2bHex(bytes, undefined, 32);
 }
 
@@ -137,7 +139,16 @@ export function verifyCommitmentHash(
   evidence: unknown,
   expectedHash: string
 ): boolean {
-  const computedHash = computeCommitmentHash(evidence);
+  if (!isValidCommitmentHash(expectedHash)) {
+    return false;
+  }
+  let computedHash: string;
+  try {
+    computedHash = computeCommitmentHash(evidence);
+  } catch {
+    // Non-JSON-serializable evidence (BigInt, circular): not a match, never a throw.
+    return false;
+  }
   return computedHash.toLowerCase() === expectedHash.toLowerCase();
 }
 
@@ -196,7 +207,18 @@ export function verifyEvidenceDetailed(
     };
   }
 
-  const computedHash = computeCommitmentHash(evidence);
+  let computedHash: string;
+  try {
+    computedHash = computeCommitmentHash(evidence);
+  } catch {
+    return {
+      isValid: false,
+      computedHash: "",
+      expectedHash: onChainHash.toLowerCase(),
+      message:
+        "Evidence is not hashable (canonical v1 hash not computable for this input)",
+    };
+  }
   const isValid = computedHash.toLowerCase() === onChainHash.toLowerCase();
 
   return {
@@ -298,7 +320,7 @@ export function legacyHashV0(evidence: unknown): string {
       `legacyHashV0: evidence is not JSON-serializable (JSON.stringify returned undefined for input of type ${typeof evidence})`,
     );
   }
-  const bytes = new TextEncoder().encode(jsonString);
+  const bytes = textEncoder.encode(jsonString);
   return blake.blake2bHex(bytes, undefined, 32);
 }
 
@@ -352,7 +374,21 @@ export function verifyEvidenceAgainstEras(
   }
 
   const expectedHash = onChainHash.toLowerCase();
-  const v1Hash = computeCommitmentHash(evidence);
+
+  let v1Hash: string;
+  try {
+    v1Hash = computeCommitmentHash(evidence);
+  } catch {
+    // Non-JSON-serializable evidence (BigInt, circular): report, never throw.
+    return {
+      isValid: false,
+      algorithm: null,
+      computedHashes: { v1: "" },
+      expectedHash,
+      message:
+        "Evidence is not hashable (canonical v1 hash not computable for this input)",
+    };
+  }
 
   if (v1Hash === expectedHash) {
     return {

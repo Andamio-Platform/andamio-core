@@ -41,7 +41,7 @@ Explicitly **not** trimmed (common cross-language traps): U+0085 NEL (Go's `stri
 - Minimal escaping only: `"` → `\"`, `\` → `\\`, control characters U+0000–U+001F as `\b`, `\t`, `\n`, `\f`, `\r` or `\uXXXX`.
 - **No HTML escaping:** `<`, `>`, `&` are emitted raw.
 - U+2028 and U+2029 are emitted raw (inside strings they will already have been trimmed at boundaries by step 1, but interior occurrences stay raw).
-- Numbers use ECMAScript number-to-string form: shortest round-trip decimal, exponent notation below 1e-6 and at/above 1e21 (`1e-7`, `1e+21`), and `-0` serializes as `"0"`. The `number-form-probes` vector pins these.
+- Numbers use ECMAScript number-to-string form: shortest round-trip decimal, exponent notation below 1e-6 and at/above 1e21 (`1e-7`, `1e+21`), and `-0` serializes as `"0"`. The `number-form-probes` vector pins the exponent forms and carries a literal `-0` in the raw fixture file; the authoritative executable pin for the `-0` rule is the inline test in `src/utils/hashing/commitment-hash.test.ts`, because JSON-module import transforms may not preserve negative zero.
 
 **Go implementer guidance:** `encoding/json`'s `json.Marshal` HTML-escapes `<`, `>`, `&` and escapes U+2028/U+2029 — that output is **wrong** for this spec. Use a `json.Encoder` with `SetEscapeHTML(false)`, note that `Encoder.Encode` appends a trailing newline which must be stripped, and verify number formatting against the vectors (Go's default float formatting differs from ECMAScript, e.g. exponent digit counts).
 

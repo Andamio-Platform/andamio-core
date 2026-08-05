@@ -6,6 +6,7 @@ import {
   normalizeForHashing,
   legacyHashV0,
   verifyEvidenceAgainstEras,
+  verifyEvidenceDetailed,
 } from "./commitment-hash";
 import vectorsFixture from "./vectors/commitment-hash-vectors.json";
 
@@ -326,5 +327,49 @@ describe("normalizeForHashing", () => {
     expect(normalizeForHashing(42)).toBe(42);
     expect(normalizeForHashing(true)).toBe(true);
     expect(normalizeForHashing(false)).toBe(false);
+  });
+});
+
+describe("never-throws contract (non-JSON evidence, malformed hashes)", () => {
+  const VALID_HEX = "0".repeat(64);
+
+  it("verifyEvidenceAgainstEras returns a result for BigInt evidence without throwing", () => {
+    const result = verifyEvidenceAgainstEras(BigInt(1), VALID_HEX);
+    expect(result.isValid).toBe(false);
+    expect(result.algorithm).toBeNull();
+    expect(result.computedHashes.v1).toBe("");
+  });
+
+  it("verifyEvidenceAgainstEras returns a result for circular evidence without throwing", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const result = verifyEvidenceAgainstEras(circular, VALID_HEX);
+    expect(result.isValid).toBe(false);
+    expect(result.algorithm).toBeNull();
+  });
+
+  it("verifyCommitmentHash returns false for null expectedHash without throwing", () => {
+    expect(verifyCommitmentHash({}, null as unknown as string)).toBe(false);
+  });
+
+  it("verifyCommitmentHash returns false for BigInt evidence without throwing", () => {
+    expect(verifyCommitmentHash(BigInt(1), VALID_HEX)).toBe(false);
+  });
+
+  it("verifyEvidenceDetailed reports unhashable evidence without throwing", () => {
+    const result = verifyEvidenceDetailed(BigInt(1), VALID_HEX);
+    expect(result.isValid).toBe(false);
+    expect(result.computedHash).toBe("");
+  });
+});
+
+describe("negative zero serialization (canonical v1)", () => {
+  // JSON-module import transforms may not preserve -0, so this inline test
+  // (not the fixture) is the authoritative pin for the spec's -0 rule.
+  it('serializes -0 as "0" and hashes identically to +0', () => {
+    expect(JSON.stringify(normalizeForHashing(-0))).toBe("0");
+    expect(computeCommitmentHash({ n: -0 })).toBe(
+      computeCommitmentHash({ n: 0 })
+    );
   });
 });
