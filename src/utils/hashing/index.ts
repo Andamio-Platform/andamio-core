@@ -32,6 +32,9 @@ export {
   isValidCommitmentHash,
   verifyEvidenceDetailed,
   normalizeForHashing,
+  // Era-aware verification (legacy v0 support)
+  legacyHashV0,
+  verifyEvidenceAgainstEras,
   // Backwards compatibility aliases
   computeAssignmentInfoHash,
   verifyAssignmentInfoHash,
@@ -41,4 +44,5 @@ export {
   type TiptapNode,
   type TiptapMark,
   type EvidenceVerificationResult,
+  type EraVerificationResult,
 } from "./commitment-hash";
