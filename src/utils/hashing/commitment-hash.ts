@@ -10,6 +10,12 @@
  * - Tamper-evidence (can verify DB content matches on-chain commitment)
  * - Privacy (evidence details not exposed on-chain)
  *
+ * The algorithm implemented by `computeCommitmentHash` is FROZEN as
+ * canonical-v1. The normative specification and cross-implementation golden
+ * vectors live in docs/specs/commitment-hash-v1.md and
+ * src/utils/hashing/vectors/commitment-hash-vectors.json. Any behavioral
+ * change is a new version, never an edit.
+ *
  * @module @andamio/core/hashing
  */
 
