@@ -4,15 +4,25 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # npm trusts this repo, workflow file and environment as a publisher,
+    # so there is no npm token. The environment's reviewer approves each run.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      # Node 24 ships npm 11.5.1 or later, which trusted publishing needs.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - run: npm ci
@@ -21,6 +31,5 @@ jobs:
 
       - run: npm run typecheck
 
+      # Trusted publishing adds a provenance attestation without a flag.
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
